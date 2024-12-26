@@ -1,36 +1,41 @@
 package com.example.martfia
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.util.Log
-import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import com.example.martfia.model.request.RecipeQueryRequest
 import com.example.martfia.model.response.RecipeQueryResponse
-import com.example.martfia.service.MartfiaRetrofitClient
 import com.example.martfia.service.CookingAssistantService
+import com.example.martfia.service.MartfiaRetrofitClient
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
 import java.util.*
 
+
 class CookingAssistantActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
-    private var currentStep = 1 // 초기 단계
+    private var currentStep = 1
+    private var hasStartedGuide = false // "안내 시작" 여부
+    private lateinit var assistantMessage: String
+
     private lateinit var cookingStepMessage: TextView
-    private lateinit var nextStepButton: Button
     private lateinit var backButton: ImageView
     private lateinit var tts: TextToSpeech
-    private lateinit var speechRecognizer: SpeechRecognizer
-    private var isSpeaking = false // TTS 진행 상태
-    private var assistantMessage: String? = null // 이전 화면에서 전달된 메시지
+    private var speechRecognizer: SpeechRecognizer? = null
+    private val RECORD_AUDIO_PERMISSION_CODE = 100
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,106 +43,56 @@ class CookingAssistantActivity : AppCompatActivity(), TextToSpeech.OnInitListene
 
         // UI 요소 초기화
         cookingStepMessage = findViewById(R.id.cookingStepMessage)
-        nextStepButton = findViewById(R.id.nextStepButton)
         backButton = findViewById(R.id.backButton)
-
-        // Intent로부터 초기 메시지 가져오기
-        assistantMessage = intent.getStringExtra("assistant_message")
 
         // TTS 초기화
         tts = TextToSpeech(this, this)
 
-        // 음성 인식기 초기화
-        setupSpeechRecognizer()
+        // 전달받은 초기 메시지 설정
+        assistantMessage = intent.getStringExtra("assistant_message") ?: "안내를 시작합니다."
 
-        // "다음 단계" 버튼 클릭 리스너
-        nextStepButton.setOnClickListener {
-            if (!isSpeaking) {
-                currentStep++
-                fetchCookingStep(currentStep)
-            } else {
-                Toast.makeText(this, "현재 음성 출력 중입니다. 잠시만 기다려주세요.", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        // 뒤로 가기 버튼 클릭 리스너
+        // 뒤로 가기 버튼 동작
         backButton.setOnClickListener {
             tts.stop()
-            val intent = Intent(this, RecipeDetailActivity::class.java)
-            startActivity(intent)
+            speechRecognizer?.destroy()
             finish()
         }
+
+        // 권한 확인 및 음성 인식기 설정
+        checkMicrophonePermission()
     }
 
-    private fun fetchCookingStep(step: Int) {
-        val service = MartfiaRetrofitClient.createService(CookingAssistantService::class.java)
-
-        val request = RecipeQueryRequest(
-            text = null, // 선택적 필드
-            current_step = step
-        )
-
-        service.queryRecipeStep(request).enqueue(object : Callback<RecipeQueryResponse> {
-            override fun onResponse(call: Call<RecipeQueryResponse>, response: Response<RecipeQueryResponse>) {
-                if (response.isSuccessful && response.body() != null) {
-                    val responseData = response.body()!!
-                    cookingStepMessage.text = responseData.text
-                    speakText(responseData.text)
-                } else {
-                    Toast.makeText(this@CookingAssistantActivity, "단계를 불러올 수 없습니다.", Toast.LENGTH_SHORT).show()
-                }
-            }
-
-            override fun onFailure(call: Call<RecipeQueryResponse>, t: Throwable) {
-                Toast.makeText(this@CookingAssistantActivity, "서버와의 통신에 실패했습니다.", Toast.LENGTH_SHORT).show()
-            }
-        })
-    }
-
-    private fun speakText(text: String) {
-        isSpeaking = true
-        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, currentStep.toString())
-    }
-
-    override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            val result = tts.setLanguage(Locale.KOREAN)
-            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                Toast.makeText(this, "TTS에서 한국어를 지원하지 않습니다.", Toast.LENGTH_SHORT).show()
-            } else {
-                setupTTSListener()
-                assistantMessage?.let { speakText(it) }
-            }
+    private fun checkMicrophonePermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                RECORD_AUDIO_PERMISSION_CODE
+            )
         } else {
-            Toast.makeText(this, "TTS 초기화 실패", Toast.LENGTH_SHORT).show()
+            setupSpeechRecognizer()
         }
     }
 
-    private fun setupTTSListener() {
-        tts.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) {
-                isSpeaking = true
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == RECORD_AUDIO_PERMISSION_CODE) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                setupSpeechRecognizer()
+            } else {
+                Toast.makeText(this, "마이크 권한이 필요합니다.", Toast.LENGTH_SHORT).show()
             }
-
-            override fun onDone(utteranceId: String?) {
-                isSpeaking = false
-                startListening() // 음성 인식 시작
-            }
-
-            override fun onError(utteranceId: String?) {
-                isSpeaking = false
-            }
-        })
+        }
     }
 
     private fun setupSpeechRecognizer() {
+        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
         val speechIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.KOREAN)
         }
 
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-        speechRecognizer.setRecognitionListener(object : RecognitionListener {
+        speechRecognizer?.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 Toast.makeText(this@CookingAssistantActivity, "음성 인식을 시작합니다.", Toast.LENGTH_SHORT).show()
             }
@@ -145,19 +100,24 @@ class CookingAssistantActivity : AppCompatActivity(), TextToSpeech.OnInitListene
             override fun onResults(results: Bundle?) {
                 val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                 val userSpeech = matches?.firstOrNull() ?: ""
+                Log.d("CookingAssistant", "User speech: $userSpeech")
+
                 if (userSpeech.contains("다음", ignoreCase = true)) {
-                    currentStep++
-                    fetchCookingStep(currentStep)
+                    moveToNextStep(userSpeech) // 음성 결과를 전달
                 } else {
-                    Toast.makeText(this@CookingAssistantActivity, "다음 단계로 이동하려면 '다음'이라고 말해주세요.", Toast.LENGTH_SHORT).show()
+                    speakText("다음 단계를 진행하려면 '다음'이라고 말해주세요.")
                 }
             }
+
 
             override fun onError(error: Int) {
                 Log.e("CookingAssistantActivity", "음성 인식 오류: $error")
             }
 
-            override fun onEndOfSpeech() {}
+            override fun onEndOfSpeech() {
+                startListening()
+            }
+
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBeginningOfSpeech() {}
             override fun onBufferReceived(buffer: ByteArray?) {}
@@ -166,17 +126,98 @@ class CookingAssistantActivity : AppCompatActivity(), TextToSpeech.OnInitListene
         })
     }
 
+
+    private fun restartSpeechRecognizer() {
+        speechRecognizer?.destroy()
+        setupSpeechRecognizer()
+        startListening()
+    }
+
     private fun startListening() {
         val speechIntent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.KOREAN)
         }
-        speechRecognizer.startListening(speechIntent)
+        try {
+            speechRecognizer?.startListening(speechIntent)
+        } catch (e: Exception) {
+            Log.e("CookingAssistantActivity", "startListening error: ${e.message}")
+            runOnUiThread {
+                Toast.makeText(this, "음성 인식 시작 중 오류가 발생했습니다.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun moveToNextStep(userSpeech: String?) {
+        val textToSend = userSpeech?.takeIf { it.isNotBlank() } ?: "다음"
+        val service = MartfiaRetrofitClient.createService(CookingAssistantService::class.java)
+
+        val request = RecipeQueryRequest(
+            text = textToSend,
+            current_step = currentStep
+        )
+
+        Log.d("CookingAssistantActivity", "Request: text=${request.text}, current_step=${request.current_step}")
+
+        service.queryRecipeStep(request).enqueue(object : Callback<RecipeQueryResponse> {
+            override fun onResponse(call: Call<RecipeQueryResponse>, response: Response<RecipeQueryResponse>) {
+                if (response.isSuccessful && response.body() != null) {
+                    val responseData = response.body()!!
+                    currentStep++
+                    cookingStepMessage.text = responseData.text
+                    speakText(responseData.text)
+                } else {
+                    Log.e("CookingAssistantActivity", "Response Error: ${response.code()} - ${response.errorBody()?.string()}")
+                    Toast.makeText(this@CookingAssistantActivity, "단계를 불러올 수 없습니다.", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            override fun onFailure(call: Call<RecipeQueryResponse>, t: Throwable) {
+                Log.e("CookingAssistantActivity", "Request Failed: ${t.message}")
+                Toast.makeText(this@CookingAssistantActivity, "서버 요청 실패.", Toast.LENGTH_SHORT).show()
+            }
+        })
+    }
+
+
+
+    private fun speakText(text: String) {
+        tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, currentStep.toString())
+        tts.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) {
+                Log.d("CookingAssistantActivity", "TTS 음성 출력 시작")
+            }
+
+            override fun onDone(utteranceId: String?) {
+                Log.d("CookingAssistantActivity", "TTS 음성 출력 완료")
+                runOnUiThread {
+                    startListening() // 음성 출력이 끝난 후 음성 인식 시작
+                }
+            }
+
+            override fun onError(utteranceId: String?) {
+                Log.e("CookingAssistantActivity", "TTS 오류 발생")
+                runOnUiThread {
+                    Toast.makeText(this@CookingAssistantActivity, "TTS 오류 발생", Toast.LENGTH_SHORT).show()
+                }
+            }
+        })
+    }
+
+
+
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts.language = Locale.KOREAN
+            speakText(assistantMessage)
+        } else {
+            Toast.makeText(this, "TTS 초기화 실패", Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         tts.shutdown()
-        speechRecognizer.destroy()
+        speechRecognizer?.destroy()
     }
 }

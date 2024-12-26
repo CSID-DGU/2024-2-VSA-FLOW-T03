@@ -1,6 +1,5 @@
 package com.example.martfia.service
 
-import com.example.martfia.model.response.YouTubeRecipeDetailsResponse
 import com.example.martfia.model.request.YouTubeRequest
 import retrofit2.Call
 import retrofit2.http.Body
@@ -12,5 +11,5 @@ interface YouTubeService {
     @POST("api/youtube")
     fun uploadYouTubeUrl(
         @Body request: YouTubeRequest
-    ): Call<YouTubeRecipeDetailsResponse>
+    ): Call<Void>
 }

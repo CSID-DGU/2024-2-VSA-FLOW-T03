@@ -10,13 +10,11 @@ import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.example.martfia.model.request.YouTubeRequest
-import com.example.martfia.model.response.YouTubeRecipeDetailsResponse
 import com.example.martfia.service.MartfiaRetrofitClient
 import com.example.martfia.service.YouTubeService
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
-import android.util.Log
 
 class UploadUrlActivity : AppCompatActivity() {
 
@@ -51,7 +49,8 @@ class UploadUrlActivity : AppCompatActivity() {
                 Toast.makeText(this, "URL을 입력해주세요", Toast.LENGTH_SHORT).show()
             } else {
                 progressBar.visibility = View.VISIBLE
-                uploadYouTubeUrl(url)
+                detectUrlButton.isEnabled = false // 버튼 비활성화
+                uploadYouTubeUrl(url) // URL 업로드 API 호출
             }
         }
     }
@@ -59,49 +58,29 @@ class UploadUrlActivity : AppCompatActivity() {
     private fun uploadYouTubeUrl(url: String) {
         val request = YouTubeRequest(url)
 
-        youTubeService.uploadYouTubeUrl(request).enqueue(object : Callback<YouTubeRecipeDetailsResponse> {
-            override fun onResponse(
-                call: Call<YouTubeRecipeDetailsResponse>,
-                response: Response<YouTubeRecipeDetailsResponse>
-            ) {
-                progressBar.visibility = View.GONE // ProgressBar 숨기기
+        youTubeService.uploadYouTubeUrl(request).enqueue(object : Callback<Void> {
+            override fun onResponse(call: Call<Void>, response: Response<Void>) {
+                progressBar.visibility = View.GONE
+                detectUrlButton.isEnabled = true
                 if (response.isSuccessful) {
-                    val recipeDetails = response.body()
-                    if (recipeDetails?.recipe != null) {
-                        moveToRecipeDetailActivity(recipeDetails)
-                    } else {
-                        Log.e("UploadUrlActivity", "Recipe or RecipeDetails is null")
-                        Toast.makeText(
-                            this@UploadUrlActivity,
-                            "레시피 정보를 받을 수 없습니다.",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
+                    Toast.makeText(this@UploadUrlActivity, "URL 업로드 성공!", Toast.LENGTH_SHORT).show()
+                    navigateToRecipeDetailActivityWithHardcodedData()
                 } else {
-                    Log.e("UploadUrlActivity", "Response failed with code: ${response.code()}")
-                    Toast.makeText(
-                        this@UploadUrlActivity,
-                        "업로드 실패: ${response.code()}",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    Toast.makeText(this@UploadUrlActivity, "업로드 실패: ${response.code()}", Toast.LENGTH_SHORT).show()
                 }
             }
 
-            override fun onFailure(call: Call<YouTubeRecipeDetailsResponse>, t: Throwable) {
-                progressBar.visibility = View.GONE // ProgressBar 숨기기
-                Log.e("UploadUrlActivity", "Request failed: ${t.message}")
-                Toast.makeText(
-                    this@UploadUrlActivity,
-                    "에러 발생: ${t.message}",
-                    Toast.LENGTH_SHORT
-                ).show()
+            override fun onFailure(call: Call<Void>, t: Throwable) {
+                progressBar.visibility = View.GONE
+                detectUrlButton.isEnabled = true
+                Toast.makeText(this@UploadUrlActivity, "네트워크 오류: ${t.message}", Toast.LENGTH_SHORT).show()
             }
         })
     }
 
-    private fun moveToRecipeDetailActivity(recipeDetails: YouTubeRecipeDetailsResponse) {
+    private fun navigateToRecipeDetailActivityWithHardcodedData() {
+        // RecipeDetailActivity로 이동
         val intent = Intent(this, RecipeDetailActivity::class.java)
-        intent.putExtra("recipeDetails", recipeDetails) // 데이터 전달
         startActivity(intent)
     }
 
